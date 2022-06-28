@@ -9,7 +9,6 @@ const db = admin.firestore();
 const app = express();
 app.use(cors({origin: true}));
 
-
 // Create and Deploy Your First Cloud Functions
 // https://firebase.google.com/docs/functions/write-firebase-functions
 
@@ -63,10 +62,12 @@ app.use(cors({origin: true}));
 
 exports.createLobby = functions.https.onCall((data) => {
     const hostId = data.userId;
+    const lobbySize = data.lobbySize;
     const ref = db.collection("lobby").doc();
     const gameId = ref.id;
     const lobby = {
       host: hostId,
+      size: lobbySize,
       pin: gameId,
       gameStarted: false,
       players: []
@@ -83,6 +84,7 @@ exports.joinLobby = functions.https.onCall((data) => {
     playerId : pId,
     playerName : pName
   };
+  
   const lobby = db.collection("lobby").doc(gameId);
   
   //adds new player to the lobby
@@ -90,24 +92,126 @@ exports.joinLobby = functions.https.onCall((data) => {
   return gameId;
 });
 
-exports.startGame =  functions.https.onCall((data) =>  {
+exports.startGame =  functions.https.onCall(async (data) =>  {
   const gameId = data.gameId;
   const question = data.question;
   const lobby = db.collection("lobby").doc(gameId);
-  //const hostId = await lobby.get().data().host
-  const players = lobby.get().then((value) => { return value.data().players});
+  const hostId = await lobby.get().then(value => { return value.data().host});
+  const players = await lobby.get().then(value => { return value.data().players});
+  var playerList = []
+
+  
+  for (const p of players){
+    console.log(p)
+    const player = {
+      playerId : p.playerId,
+      playerName : p.playerName,
+      score : 0,
+      submittedAnswer : false
+    }
+    playerList.push(player)
+  }
+
   const game = {
     pin : gameId,
-    // host : hostId,
+    host : hostId,
     finished : false,
     createdTime : Date.now(),
     currentQuestion : 1,
-    question : question
-    // currentQuestion : 1,
-    // question : question,
-    // players : playerList
+    numAnswered : 0,
+    question : question,
+    players : playerList
   };
+
   db.collection("game").doc(gameId).set(game);
   lobby.update({gameStarted : true}); 
   return gameId;
+});
+
+exports.nextQuestion =  functions.https.onCall(async (data) =>  {
+  const gameId = data.gameId;
+  const question = data.question;
+  const game = db.collection("game").doc(gameId);
+  const hostId = await game.get().then(value => { return value.data().host});
+  const currentQuestion = await game.get().then(value => { return value.data().currentQuestion});
+  const players = await game.get().then(value => { return value.data().players});
+  var playerList = []
+
+  
+  for (const p of players){
+    console.log(p)
+    const player = {
+      playerId : p.playerId,
+      playerName : p.playerName,
+      score : p.score,
+      submittedAnswer : false
+    }
+    playerList.push(player)
+  }
+
+  const nextQuiz = {
+    pin : gameId,
+    host : hostId,
+    finished : false,
+    createdTime : Date.now(),
+    currentQuestion : currentQuestion + 1,
+    numAnswered : 0,
+    question : question,
+    players : playerList
+  };
+
+  db.collection("game").doc(gameId).set(nextQuiz);
+});
+
+exports.submitAnswer = functions.https.onCall(async (data) =>  {
+  const gameId = data.gameId;
+  const playerId = data.playerId;
+  const answer = data.answer;
+  const timeLimit = 30;
+  
+  const game = db.collection("game").doc(gameId);
+  const startTime = await game.get().then(value => { return value.data().createdTime});
+  const players = await game.get().then(value => { return value.data().players});
+  const question = await game.get().then(value => { return value.data().question});
+  const numAnswered = await game.get().then(value => { return value.data().numAnswered});
+  
+  var currentPlayer = {};
+  var updatedPlayer = {};
+  var responseTime = (Date.now()-startTime)/1000;
+  var score = 0;
+  var totalScore = 0;
+  var isAnswerCorrect = false;
+
+
+  if (answer == question.correctAnswer) {
+    score = Math.round((1-((responseTime/timeLimit)/2))*1000);
+    isAnswerCorrect = true;
+  }
+  if (responseTime > 30)
+    score = 0
+
+
+  for (const p of players){
+    if (p.playerId == playerId && !p.submittedAnswer) {
+      currentPlayer = p;
+      totalScore = p.score + score;
+      updatedPlayer = {
+        playerId : p.playerId,
+        playerName : p.playerName,
+        score : totalScore,
+        submittedAnswer : true
+      };
+      game.update({numAnswered : numAnswered + 1})
+      game.update({players : FieldValue.arrayRemove(currentPlayer)});
+      game.update({players : FieldValue.arrayUnion(updatedPlayer)});
+    }
+  }
+
+  const changes = {
+    score : score,
+    totalScore : totalScore,
+    isAnswerCorrect : isAnswerCorrect
+  };
+  console.log(changes)
+  return changes;
 });
