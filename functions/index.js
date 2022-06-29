@@ -76,7 +76,7 @@ exports.createLobby = functions.https.onCall((data) => {
     return gameId;
 });
 
-exports.joinLobby = functions.https.onCall((data) => {
+exports.joinLobby = functions.https.onCall(async (data) => {
   const gameId = data.gameId;
   const pName = data.playerName;
   const pId = data.playerId;
@@ -85,11 +85,14 @@ exports.joinLobby = functions.https.onCall((data) => {
     playerName : pName
   };
   
-  const lobby = db.collection("lobby").doc(gameId);
-  
-  //adds new player to the lobby
-  lobby.update({players : FieldValue.arrayUnion(player)});
-  return gameId;
+  const lobby = db.collection("lobby").doc(gameId)
+  if ((await lobby.get()).exists) {
+    //adds new player to the lobby
+    lobby.update({players : FieldValue.arrayUnion(player)});
+    return true;
+  } else {
+    return false;
+  }
 });
 
 exports.startGame =  functions.https.onCall(async (data) =>  {
@@ -118,6 +121,8 @@ exports.startGame =  functions.https.onCall(async (data) =>  {
     finished : false,
     createdTime : Date.now(),
     currentQuestion : 1,
+    displayingLeaderboard : false,
+    displayingResult : false,
     numAnswered : 0,
     question : question,
     players : playerList
@@ -126,6 +131,20 @@ exports.startGame =  functions.https.onCall(async (data) =>  {
   db.collection("game").doc(gameId).set(game);
   lobby.update({gameStarted : true}); 
   return gameId;
+});
+
+exports.displayLeaderboard = functions.https.onCall((data) => {
+  const gameId = data.gameId
+  const game = db.collection("game").doc(gameId);
+  game.update({displayingResult : false});
+  game.update({displayLeaderboard : true});
+});
+
+exports.displayResult= functions.https.onCall((data) => {
+  const gameId = data.gameId
+  const game = db.collection("game").doc(gameId);
+  game.update({displayingResult : true});
+  game.update({displayingLeaderboard : false});
 });
 
 exports.nextQuestion =  functions.https.onCall(async (data) =>  {
@@ -149,18 +168,21 @@ exports.nextQuestion =  functions.https.onCall(async (data) =>  {
     playerList.push(player)
   }
 
-  const nextQuiz = {
+  const next = {
     pin : gameId,
     host : hostId,
     finished : false,
     createdTime : Date.now(),
     currentQuestion : currentQuestion + 1,
+    displayingLeaderboard : false,
+    displayingResult : false,
     numAnswered : 0,
     question : question,
     players : playerList
   };
 
-  db.collection("game").doc(gameId).set(nextQuiz);
+  db.collection("game").doc(gameId).set(next);
+  return true;
 });
 
 exports.submitAnswer = functions.https.onCall(async (data) =>  {
@@ -174,6 +196,7 @@ exports.submitAnswer = functions.https.onCall(async (data) =>  {
   const players = await game.get().then(value => { return value.data().players});
   const question = await game.get().then(value => { return value.data().question});
   const numAnswered = await game.get().then(value => { return value.data().numAnswered});
+  const displayingLeaderboard = await game.get().then(value => { return value.data().displayingLeaderboard});
   
   var currentPlayer = {};
   var updatedPlayer = {};
@@ -192,7 +215,7 @@ exports.submitAnswer = functions.https.onCall(async (data) =>  {
 
 
   for (const p of players){
-    if (p.playerId == playerId && !p.submittedAnswer) {
+    if (p.playerId == playerId && !p.submittedAnswer && !displayingLeaderboard ) {
       currentPlayer = p;
       totalScore = p.score + score;
       updatedPlayer = {
