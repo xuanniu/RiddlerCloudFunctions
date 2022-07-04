@@ -105,7 +105,6 @@ exports.startGame =  functions.https.onCall(async (data) =>  {
 
   
   for (const p of players){
-    console.log(p)
     const player = {
       playerId : p.playerId,
       playerName : p.playerName,
@@ -137,7 +136,7 @@ exports.displayLeaderboard = functions.https.onCall((data) => {
   const gameId = data.gameId
   const game = db.collection("game").doc(gameId);
   game.update({displayingResult : false});
-  game.update({displayLeaderboard : true});
+  game.update({displayingLeaderboard : true});
 });
 
 exports.displayResult= functions.https.onCall((data) => {
@@ -146,6 +145,47 @@ exports.displayResult= functions.https.onCall((data) => {
   game.update({displayingResult : true});
   game.update({displayingLeaderboard : false});
 });
+
+exports.finishGame = functions.https.onCall((data) => {
+  const gameId = data.gameId
+  const game = db.collection("game").doc(gameId);
+  game.update({finished : true});
+});
+
+exports.leaveLobby = functions.https.onCall(async (data) => {
+  const gameId = data.gameId
+  const playerId = data.playerId
+  const lobbyType = data.lobbyType
+  const lobby = db.collection(lobbyType).doc(gameId);
+  const players = await lobby.get().then(value => { return value.data().players});
+  var playerToRemove = [];
+  for (const p of players){
+    if (p.playerId == playerId) {
+        playerToRemove = p;
+    }
+  }
+
+  lobby.update({players : FieldValue.arrayRemove(playerToRemove)});
+});
+
+
+
+exports.deleteLobby = functions.firestore
+    .document('lobby/{lobbyId}')
+    .onUpdate(snap => {
+      const lobby = snap.after.data()
+      console.log(snap.after.id);
+      console.log(lobby.gameStarted);
+      console.log(lobby.players);
+      console.log(lobby.players == [])
+      console.log(lobby.gameStarted == true)
+      console.log(lobby.players == [] && lobby.gameStarted == true)
+      if(lobby.players == [] && lobby.gameStarted) {
+        console.log(snap.after.id);
+        db.collection('lobby').doc(snap.after.id).delete();
+      }
+    });
+
 
 exports.nextQuestion =  functions.https.onCall(async (data) =>  {
   const gameId = data.gameId;
