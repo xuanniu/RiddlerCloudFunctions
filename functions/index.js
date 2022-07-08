@@ -69,6 +69,7 @@ exports.createLobby = functions.https.onCall((data) => {
       host: hostId,
       size: lobbySize,
       pin: gameId,
+      hostQuit: false,
       gameStarted: false,
       players: []
     };
@@ -80,13 +81,15 @@ exports.joinLobby = functions.https.onCall(async (data) => {
   const gameId = data.gameId;
   const pName = data.playerName;
   const pId = data.playerId;
+  const lobby = db.collection("lobby").doc(gameId)
+  const size = await lobby.get().then(value => { return value.data().size});
+  const players = await lobby.get().then(value => { return value.data().players});
   const player = {
     playerId : pId,
     playerName : pName
   };
   
-  const lobby = db.collection("lobby").doc(gameId)
-  if ((await lobby.get()).exists) {
+  if ((await lobby.get()).exists && players.length < size) {
     //adds new player to the lobby
     lobby.update({players : FieldValue.arrayUnion(player)});
     return true;
@@ -120,6 +123,7 @@ exports.startGame =  functions.https.onCall(async (data) =>  {
     finished : false,
     createdTime : Date.now(),
     currentQuestion : 1,
+    hostQuit: false,
     displayingLeaderboard : false,
     displayingResult : false,
     numAnswered : 0,
@@ -168,24 +172,32 @@ exports.leaveLobby = functions.https.onCall(async (data) => {
   lobby.update({players : FieldValue.arrayRemove(playerToRemove)});
 });
 
+exports.hostLeave = functions.https.onCall(async (data) => {
+  const gameId = data.gameId
+  const lobbyType = data.lobbyType
+  const lobby = db.collection(lobbyType).doc(gameId);
+
+  lobby.update({hostQuit: true});
+});
 
 
 exports.deleteLobby = functions.firestore
     .document('lobby/{lobbyId}')
-    .onUpdate(snap => {
+    .onWrite(snap => {
       const lobby = snap.after.data()
-      console.log(snap.after.id);
-      console.log(lobby.gameStarted);
-      console.log(lobby.players);
-      console.log(lobby.players == [])
-      console.log(lobby.gameStarted == true)
-      console.log(lobby.players == [] && lobby.gameStarted == true)
-      if(lobby.players == [] && lobby.gameStarted) {
-        console.log(snap.after.id);
+      if(lobby.players.length == 0 && (lobby.gameStarted || lobby.hostQuit)) {
         db.collection('lobby').doc(snap.after.id).delete();
       }
     });
 
+exports.deleteGame = functions.firestore
+.document('game/{gameId}')
+.onUpdate(snap => {
+  const game = snap.after.data()
+  if(game.players.length == 0 && (game.finished || game.hostQuit)) {
+    db.collection('game').doc(snap.after.id).delete();
+  }
+});
 
 exports.nextQuestion =  functions.https.onCall(async (data) =>  {
   const gameId = data.gameId;
@@ -214,6 +226,7 @@ exports.nextQuestion =  functions.https.onCall(async (data) =>  {
     finished : false,
     createdTime : Date.now(),
     currentQuestion : currentQuestion + 1,
+    hostQuit: false,
     displayingLeaderboard : false,
     displayingResult : false,
     numAnswered : 0,
